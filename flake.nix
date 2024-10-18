@@ -10,20 +10,23 @@
     let
       name = "breakout";
     in
-    utils.lib.eachDefaultSystem (system:
-      let
-        pkgs = nixpkgs.legacyPackages.${system};
-        lib = pkgs.lib;
-      in
-      {
-        devShell = pkgs.mkShell {
-          name = name;
-          buildInputs = with pkgs; [
-            odin
-            ols
-            raylib
-          ];
-        };
-      }
-    );
+    utils.lib.eachDefaultSystem
+      (system:
+        let
+          pkgs = import nixpkgs { inherit system; };
+          lib = pkgs.lib;
+        in
+        {
+          devShell = pkgs.mkShell {
+            name = name;
+            buildInputs = with pkgs; [
+              darwin.apple_sdk.frameworks.Cocoa
+              go-task
+              odin
+              ols
+              raylib
+            ];
+          };
+        }
+      );
 }

@@ -1,0 +1,11 @@
+version: '3'
+
+interval: 100ms
+
+tasks:
+    build:
+        sources:
+            - '**/*.odin'
+        cmds:
+            - odin build .
+            - echo "Done building."
