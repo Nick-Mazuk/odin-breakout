@@ -20,6 +20,7 @@
           name = name;
           buildInputs = with pkgs; [
             odin
+            ols
             raylib
           ];
         };
