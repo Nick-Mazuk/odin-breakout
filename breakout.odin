@@ -3,6 +3,7 @@ package breakout
 import fmt "core:fmt"
 import math "core:math"
 import linalg "core:math/linalg"
+import rand "core:math/rand"
 import rl "vendor:raylib"
 
 SCREEN_SIZE :: 320
@@ -212,6 +213,7 @@ bounce_on_rect :: proc(
 		case .Paddle:
 			rl.PlaySound(assets.audio.hit_paddle)
 		case .Block:
+			rl.SetSoundPitch(assets.audio.hit_block, rand.float32_range(0.8, 1.2))
 			rl.PlaySound(assets.audio.hit_block)
 		}
 	}
