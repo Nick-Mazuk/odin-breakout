@@ -58,22 +58,44 @@ block_score := [BlockColor]int {
 	.Red    = 40,
 }
 
+Stage :: enum {
+	Waiting,
+	Playing,
+	GameOver,
+}
+
 State :: struct {
-	paddle:  rl.Rectangle,
-	ball:    struct {
+	paddle: rl.Rectangle,
+	ball:   struct {
 		pos:       rl.Vector2,
 		direction: rl.Vector2,
 	},
-	blocks:  [NUM_BLOCKS_X][NUM_BLOCKS_Y]bool,
-	score:   int,
-	started: bool,
+	blocks: [NUM_BLOCKS_X][NUM_BLOCKS_Y]bool,
+	score:  int,
+	stage:  Stage,
+}
+
+Textures :: struct {
+	ball:   rl.Texture2D,
+	paddle: rl.Texture2D,
+}
+
+Audio :: struct {
+	hit_block:  rl.Sound,
+	hit_paddle: rl.Sound,
+	game_over:  rl.Sound,
+}
+
+Assets :: struct {
+	textures: Textures,
+	audio:    Audio,
 }
 
 state_init :: proc() -> State {
 	return State {
 		paddle = {SCREEN_SIZE / 2 - PADDLE_WIDTH / 2, PADDLE_Y, PADDLE_WIDTH, PADDLE_HEIGHT},
 		ball = {pos = {SCREEN_SIZE / 2, BALL_START_Y}, direction = {0, 0}},
-		started = false,
+		stage = .Waiting,
 		blocks = init_blocks(),
 	}
 }
@@ -85,7 +107,7 @@ restart :: proc(state: ^State) {
 		direction = {0, 0},
 	}
 	state.blocks = init_blocks()
-	state.started = false
+	state.stage = .Waiting
 	state.score = 0
 }
 
@@ -112,16 +134,11 @@ paddle_velocity :: proc() -> f32 {
 	return velocity
 }
 
-
-get_dt :: proc(state: ^State) -> f32 {
-	return rl.GetFrameTime()
-}
-
 start_game :: proc(state: ^State) {
 	paddle_middle := rl.Vector2{state.paddle.x + PADDLE_WIDTH / 2, PADDLE_Y}
 	ball_to_middle := paddle_middle - state.ball.pos
 	state.ball.direction = linalg.normalize0(ball_to_middle)
-	state.started = true
+	state.stage = .Playing
 }
 
 reflect :: proc(dir, normal: rl.Vector2) -> rl.Vector2 {
@@ -152,6 +169,7 @@ get_block_rect :: proc(x, y: int) -> rl.Rectangle {
 
 bounce_on_rect :: proc(
 	state: ^State,
+	assets: ^Assets,
 	previous_ball_pos: rl.Vector2,
 	rect: rl.Rectangle,
 	item: Item,
@@ -189,14 +207,21 @@ bounce_on_rect :: proc(
 		if normal != 0 {
 			state.ball.direction = reflect(state.ball.direction, normal)
 		}
+
+		switch item {
+		case .Paddle:
+			rl.PlaySound(assets.audio.hit_paddle)
+		case .Block:
+			rl.PlaySound(assets.audio.hit_block)
+		}
 	}
 }
 
-handle_paddle_collision :: proc(state: ^State, previous_ball_pos: rl.Vector2) {
-	bounce_on_rect(state, previous_ball_pos, state.paddle, Item.Paddle)
+handle_paddle_collision :: proc(state: ^State, assets: ^Assets, previous_ball_pos: rl.Vector2) {
+	bounce_on_rect(state, assets, previous_ball_pos, state.paddle, Item.Paddle)
 }
 
-handle_screen_collision :: proc(state: ^State, previous_ball_pos: rl.Vector2) {
+handle_screen_collision :: proc(state: ^State, assets: ^Assets, previous_ball_pos: rl.Vector2) {
 	// Collides with right side of screen
 	if state.ball.pos.x + BALL_RADIUS > SCREEN_SIZE {
 		state.ball.pos.x = SCREEN_SIZE - BALL_RADIUS
@@ -216,13 +241,14 @@ handle_screen_collision :: proc(state: ^State, previous_ball_pos: rl.Vector2) {
 	}
 
 	// Goes off the bottom of the screen
-	if state.ball.pos.y + BALL_RADIUS > SCREEN_SIZE {
-		restart(state)
+	if state.stage == .Playing && state.ball.pos.y + BALL_RADIUS > SCREEN_SIZE {
+		state.stage = .GameOver
+		rl.PlaySound(assets.audio.game_over)
 	}
 }
 
 
-handle_block_collision :: proc(state: ^State, previous_ball_pos: rl.Vector2) {
+handle_block_collision :: proc(state: ^State, assets: ^Assets, previous_ball_pos: rl.Vector2) {
 	for x in 0 ..< NUM_BLOCKS_X {
 		for y in 0 ..< NUM_BLOCKS_Y {
 			if state.blocks[x][y] == false do continue
@@ -230,15 +256,15 @@ handle_block_collision :: proc(state: ^State, previous_ball_pos: rl.Vector2) {
 			if rl.CheckCollisionCircleRec(state.ball.pos, BALL_RADIUS, block) {
 				state.blocks[x][y] = false
 				state.score += block_score[row_colors[y]]
-				bounce_on_rect(state, previous_ball_pos, block, Item.Block)
+				bounce_on_rect(state, assets, previous_ball_pos, block, Item.Block)
 				return
 			}
 		}
 	}
 }
 
-move_ball :: proc(state: ^State, dt: f32) {
-	if !state.started {
+move_ball :: proc(state: ^State, assets: ^Assets, dt: f32) {
+	if state.stage == .Waiting {
 		state.ball.pos = {
 			SCREEN_SIZE / 2 + f32(math.cos(rl.GetTime()) * SCREEN_SIZE / 4),
 			BALL_START_Y,
@@ -250,9 +276,9 @@ move_ball :: proc(state: ^State, dt: f32) {
 	assert(is_normalized(state.ball.direction))
 	state.ball.pos += state.ball.direction * BALL_SPEED * dt
 
-	handle_paddle_collision(state, previous_ball_pos)
-	handle_screen_collision(state, previous_ball_pos)
-	handle_block_collision(state, previous_ball_pos)
+	handle_paddle_collision(state, assets, previous_ball_pos)
+	handle_screen_collision(state, assets, previous_ball_pos)
+	handle_block_collision(state, assets, previous_ball_pos)
 
 	assert(is_normalized(state.ball.direction))
 }
@@ -282,7 +308,27 @@ draw_score :: proc(state: ^State) {
 	rl.DrawText(fmt.ctprint("Score: ", state.score), 5, 5, 10, rl.WHITE)
 }
 
-draw :: proc(state: ^State) {
+draw_game_over :: proc(state: ^State) {
+	assert(state.stage == .GameOver)
+	game_over_width := rl.MeasureText("Game Over", 20)
+	rl.DrawText(
+		"Game Over",
+		SCREEN_SIZE / 2 - game_over_width / 2,
+		SCREEN_SIZE / 2 - 35,
+		20,
+		rl.WHITE,
+	)
+	restart_width := rl.MeasureText("press space to restart", 12)
+	rl.DrawText(
+		"press space to restart",
+		SCREEN_SIZE / 2 - restart_width / 2,
+		SCREEN_SIZE / 2 - 20,
+		12,
+		rl.WHITE,
+	)
+}
+
+draw :: proc(state: ^State, assets: ^Assets) {
 	rl.BeginDrawing()
 	rl.ClearBackground({150, 190, 220, 255})
 
@@ -291,10 +337,13 @@ draw :: proc(state: ^State) {
 	}
 	rl.BeginMode2D(camera)
 
-	rl.DrawRectangleRec(state.paddle, {50, 150, 90, 255})
-	rl.DrawCircleV(state.ball.pos, BALL_RADIUS, {200, 90, 20, 255})
+	rl.DrawTextureV(assets.textures.paddle, {state.paddle.x, state.paddle.y}, rl.WHITE)
+	rl.DrawTextureV(assets.textures.ball, state.ball.pos - {BALL_RADIUS, BALL_RADIUS}, rl.WHITE)
 	draw_blocks(state)
 	draw_score(state)
+	if state.stage == .GameOver {
+		draw_game_over(state)
+	}
 	rl.EndMode2D()
 	rl.EndDrawing()
 }
@@ -303,22 +352,43 @@ main :: proc() {
 	rl.SetConfigFlags({.VSYNC_HINT})
 	rl.InitWindow(WINDOW_SIZE, WINDOW_SIZE, "Breakout")
 	rl.SetTargetFPS(500)
+	rl.InitAudioDevice()
 
 	state := state_init()
+
+	assets := Assets {
+		textures = {
+			ball = rl.LoadTexture("assets/ball.png"),
+			paddle = rl.LoadTexture("assets/paddle.png"),
+		},
+		audio = {
+			hit_block = rl.LoadSound("assets/hit_block.wav"),
+			hit_paddle = rl.LoadSound("assets/hit_paddle.wav"),
+			game_over = rl.LoadSound("assets/game_over.wav"),
+		},
+	}
+
 
 	restart(&state)
 
 	for !rl.WindowShouldClose() {
-		if !state.started && rl.IsKeyPressed(.SPACE) {
-			start_game(&state)
+		if rl.IsKeyPressed(.SPACE) {
+			switch state.stage {
+			case .Waiting:
+				start_game(&state)
+			case .GameOver:
+				restart(&state)
+			case .Playing:
+			}
 		}
 
-		dt := get_dt(&state)
+		dt := rl.GetFrameTime()
 		move_paddle(&state, dt)
-		move_ball(&state, dt)
+		move_ball(&state, &assets, dt)
 
-		draw(&state)
+		draw(&state, &assets)
 		free_all(context.temp_allocator)
 	}
+	rl.CloseAudioDevice()
 	rl.CloseWindow()
 }
