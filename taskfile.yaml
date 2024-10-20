@@ -9,3 +9,10 @@ tasks:
         cmds:
             - odin build .
             - echo "Done building."
+
+    build-prod:
+        sources:
+            - '**/*.odin'
+        cmds:
+            - odin build . -o:aggressive
+            - echo "Done building."
