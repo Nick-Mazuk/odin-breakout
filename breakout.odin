@@ -16,8 +16,47 @@ BALL_RADIUS :: 4
 BALL_START_Y :: 160
 NUM_BLOCKS_X :: 10
 NUM_BLOCKS_Y :: 8
+BLOCK_WIDTH :: 28
+BLOCK_HEIGHT :: 10
 
 Blocks :: #type [NUM_BLOCKS_X][NUM_BLOCKS_Y]bool
+
+BlockColor :: enum {
+	Yellow,
+	Green,
+	Purple,
+	Red,
+}
+
+Item :: enum {
+	Block,
+	Paddle,
+}
+
+row_colors := [NUM_BLOCKS_Y]BlockColor {
+	.Red,
+	.Red,
+	.Purple,
+	.Purple,
+	.Green,
+	.Green,
+	.Yellow,
+	.Yellow,
+}
+
+block_color_values := [BlockColor]rl.Color {
+	.Yellow = {253, 249, 150, 255},
+	.Green  = {180, 245, 190, 255},
+	.Purple = {170, 120, 250, 255},
+	.Red    = {250, 90, 85, 255},
+}
+
+block_score := [BlockColor]int {
+	.Yellow = 10,
+	.Green  = 20,
+	.Purple = 30,
+	.Red    = 40,
+}
 
 State :: struct {
 	paddle:  rl.Rectangle,
@@ -26,6 +65,7 @@ State :: struct {
 		direction: rl.Vector2,
 	},
 	blocks:  [NUM_BLOCKS_X][NUM_BLOCKS_Y]bool,
+	score:   int,
 	started: bool,
 }
 
@@ -46,13 +86,14 @@ restart :: proc(state: ^State) {
 	}
 	state.blocks = init_blocks()
 	state.started = false
+	state.score = 0
 }
 
 init_blocks :: proc() -> Blocks {
 	blocks: [NUM_BLOCKS_X][NUM_BLOCKS_Y]bool
 	for x in 0 ..< NUM_BLOCKS_X {
 		for y in 0 ..< NUM_BLOCKS_Y {
-			blocks[x][y] = false
+			blocks[x][y] = true
 		}
 	}
 	return blocks
@@ -100,43 +141,48 @@ move_paddle :: proc(state: ^State, dt: f32) {
 	state.paddle.x = clamp(state.paddle.x, 0, SCREEN_SIZE - PADDLE_WIDTH)
 }
 
-move_ball :: proc(state: ^State, dt: f32) {
-	if !state.started {
-		state.ball.pos = {
-			SCREEN_SIZE / 2 + f32(math.cos(rl.GetTime()) * SCREEN_SIZE / 4),
-			BALL_START_Y,
-		}
-		return
+get_block_rect :: proc(x, y: int) -> rl.Rectangle {
+	return {
+		x = f32(20 + x * (BLOCK_WIDTH)),
+		y = f32(40 + y * (BLOCK_HEIGHT)),
+		width = BLOCK_WIDTH,
+		height = BLOCK_HEIGHT,
 	}
+}
 
-	previous_ball_pos := state.ball.pos
-	assert(is_normalized(state.ball.direction))
-	state.ball.pos += state.ball.direction * BALL_SPEED * dt
-
-	if rl.CheckCollisionCircleRec(state.ball.pos, BALL_RADIUS, state.paddle) {
+bounce_on_rect :: proc(
+	state: ^State,
+	previous_ball_pos: rl.Vector2,
+	rect: rl.Rectangle,
+	item: Item,
+) {
+	if rl.CheckCollisionCircleRec(state.ball.pos, BALL_RADIUS, rect) {
 		normal: rl.Vector2
 
-		// Collides with top of paddle
-		if previous_ball_pos.y < state.paddle.y + state.paddle.height {
-			distance_from_center := state.ball.pos.x - (state.paddle.x + state.paddle.width / 2)
-			skew := distance_from_center / state.paddle.width * 0.5
+		// Collides with top of rect
+		if previous_ball_pos.y < rect.y + rect.height {
+			skew: f32
+			if item == Item.Paddle {
+				distance_from_center := state.ball.pos.x - (rect.x + rect.width / 2)
+				skew = distance_from_center / rect.width * 0.5
+			}
 			normal += {skew, -1}
-			state.ball.pos.y = state.paddle.y - BALL_RADIUS
+			state.ball.pos.y = rect.y - BALL_RADIUS
 		}
 
-		// Collides with bottom of paddle
-		if previous_ball_pos.y > state.paddle.y + state.paddle.height {
+		// Collides with bottom of rect
+		if previous_ball_pos.y > rect.y + rect.height {
 			normal += {0, 1}
-			state.ball.pos.y = state.paddle.y + state.paddle.height + BALL_RADIUS
+			state.ball.pos.y = rect.y + rect.height + BALL_RADIUS
 		}
 
-		// Collides with left side of paddle
-		if previous_ball_pos.x < state.paddle.x {
+		// Collides with left side of rect
+		if previous_ball_pos.x < rect.x {
 			normal += {-1, 0}
 		}
 
-		// Collides with right side of paddle
-		if previous_ball_pos.x > state.paddle.x + state.paddle.width {
+		// Collides with right side of rect
+		if previous_ball_pos.x > rect.x + rect.width {
 			normal += {1, 0}
 		}
 
@@ -144,7 +190,13 @@ move_ball :: proc(state: ^State, dt: f32) {
 			state.ball.direction = reflect(state.ball.direction, normal)
 		}
 	}
+}
 
+handle_paddle_collision :: proc(state: ^State, previous_ball_pos: rl.Vector2) {
+	bounce_on_rect(state, previous_ball_pos, state.paddle, Item.Paddle)
+}
+
+handle_screen_collision :: proc(state: ^State, previous_ball_pos: rl.Vector2) {
 	// Collides with right side of screen
 	if state.ball.pos.x + BALL_RADIUS > SCREEN_SIZE {
 		state.ball.pos.x = SCREEN_SIZE - BALL_RADIUS
@@ -167,8 +219,67 @@ move_ball :: proc(state: ^State, dt: f32) {
 	if state.ball.pos.y + BALL_RADIUS > SCREEN_SIZE {
 		restart(state)
 	}
+}
+
+
+handle_block_collision :: proc(state: ^State, previous_ball_pos: rl.Vector2) {
+	for x in 0 ..< NUM_BLOCKS_X {
+		for y in 0 ..< NUM_BLOCKS_Y {
+			if state.blocks[x][y] == false do continue
+			block := get_block_rect(x, y)
+			if rl.CheckCollisionCircleRec(state.ball.pos, BALL_RADIUS, block) {
+				state.blocks[x][y] = false
+				state.score += block_score[row_colors[y]]
+				bounce_on_rect(state, previous_ball_pos, block, Item.Block)
+				return
+			}
+		}
+	}
+}
+
+move_ball :: proc(state: ^State, dt: f32) {
+	if !state.started {
+		state.ball.pos = {
+			SCREEN_SIZE / 2 + f32(math.cos(rl.GetTime()) * SCREEN_SIZE / 4),
+			BALL_START_Y,
+		}
+		return
+	}
+
+	previous_ball_pos := state.ball.pos
+	assert(is_normalized(state.ball.direction))
+	state.ball.pos += state.ball.direction * BALL_SPEED * dt
+
+	handle_paddle_collision(state, previous_ball_pos)
+	handle_screen_collision(state, previous_ball_pos)
+	handle_block_collision(state, previous_ball_pos)
 
 	assert(is_normalized(state.ball.direction))
+}
+
+draw_blocks :: proc(state: ^State) {
+	for x in 0 ..< NUM_BLOCKS_X {
+		for y in 0 ..< NUM_BLOCKS_Y {
+			if state.blocks[x][y] == false do continue
+			rect := get_block_rect(x, y)
+			// Fill
+			rl.DrawRectangleRec(rect, block_color_values[row_colors[y]])
+
+			// Border
+			top_left := rl.Vector2{rect.x, rect.y}
+			top_right := rl.Vector2{rect.x + rect.width, rect.y}
+			bottom_left := rl.Vector2{rect.x, rect.y + rect.height}
+			bottom_right := rl.Vector2{rect.x + rect.width, rect.y + rect.height}
+			rl.DrawLineEx(top_left, top_right, 1, {255, 255, 150, 100})
+			rl.DrawLineEx(top_right, bottom_right, 1, {255, 255, 150, 100})
+			rl.DrawLineEx(bottom_right, bottom_left, 1, {255, 255, 150, 100})
+			rl.DrawLineEx(bottom_left, top_left, 1, {255, 255, 150, 100})
+		}
+	}
+}
+
+draw_score :: proc(state: ^State) {
+	rl.DrawText(fmt.ctprint("Score: ", state.score), 5, 5, 10, rl.WHITE)
 }
 
 draw :: proc(state: ^State) {
@@ -182,6 +293,8 @@ draw :: proc(state: ^State) {
 
 	rl.DrawRectangleRec(state.paddle, {50, 150, 90, 255})
 	rl.DrawCircleV(state.ball.pos, BALL_RADIUS, {200, 90, 20, 255})
+	draw_blocks(state)
+	draw_score(state)
 	rl.EndMode2D()
 	rl.EndDrawing()
 }
@@ -205,6 +318,7 @@ main :: proc() {
 		move_ball(&state, dt)
 
 		draw(&state)
+		free_all(context.temp_allocator)
 	}
 	rl.CloseWindow()
 }
