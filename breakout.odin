@@ -122,6 +122,19 @@ init_blocks :: proc() -> Blocks {
 	return blocks
 }
 
+assets_init :: proc() -> Assets {return{
+		textures = {
+			ball = rl.LoadTexture("assets/ball.png"),
+			paddle = rl.LoadTexture("assets/paddle.png"),
+		},
+		audio = {
+			hit_block = rl.LoadSound("assets/hit_block.wav"),
+			hit_paddle = rl.LoadSound("assets/hit_paddle.wav"),
+			game_over = rl.LoadSound("assets/game_over.wav"),
+		},
+	}
+}
+
 paddle_velocity :: proc() -> f32 {
 	velocity: f32
 
@@ -357,19 +370,7 @@ main :: proc() {
 	rl.InitAudioDevice()
 
 	state := state_init()
-
-	assets := Assets {
-		textures = {
-			ball = rl.LoadTexture("assets/ball.png"),
-			paddle = rl.LoadTexture("assets/paddle.png"),
-		},
-		audio = {
-			hit_block = rl.LoadSound("assets/hit_block.wav"),
-			hit_paddle = rl.LoadSound("assets/hit_paddle.wav"),
-			game_over = rl.LoadSound("assets/game_over.wav"),
-		},
-	}
-
+	assets := assets_init()
 
 	restart(&state)
 
